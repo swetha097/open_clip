@@ -9,6 +9,11 @@ import braceexpand
 from dataclasses import dataclass
 from multiprocessing import Value
 
+from amd.rocal.plugin.pytorch import ROCALClassificationIterator
+from amd.rocal.pipeline import Pipeline
+import amd.rocal.fn as fn
+import amd.rocal.types as types
+
 import numpy as np
 import pandas as pd
 import torch
@@ -57,12 +62,17 @@ class SharedEpoch:
     def get_value(self):
         return self.shared_epoch.value
 
+class NumSamplesAndBatches:
+    def __init__(self, num_samples: int = 0, num_batches: int = 0):
+        self.num_samples = num_samples
+        self.num_batches = num_batches
 
 @dataclass
 class DataInfo:
-    dataloader: DataLoader
+    dataloader: ROCALClassificationIterator
     sampler: DistributedSampler = None
     shared_epoch: SharedEpoch = None
+    num_samples_and_batches: NumSamplesAndBatches = None
 
     def set_epoch(self, epoch):
         if self.shared_epoch is not None:
@@ -112,6 +122,8 @@ def get_dataset_size(shards):
         # LAION-400M: 407332084
         # LAION-2B (english): 2170337258
     num_shards = len(shards_list)
+    print("\n num_shards", num_shards)
+    print("\ntotal_size", total_size)
     return total_size, num_shards
 
 
@@ -131,34 +143,14 @@ def get_imagenet(args, preprocess_fns, split):
             data_path = args.imagenet_val
             preprocess_fn = preprocess_val
         assert data_path
-
-        dataset = datasets.ImageFolder(data_path, transform=preprocess_fn)
-
-    if is_train:
-        idxs = np.zeros(len(dataset.targets))
-        target_array = np.array(dataset.targets)
-        k = 50
-        for c in range(1000):
-            m = target_array == c
-            n = len(idxs[m])
-            arr = np.zeros(n)
-            arr[:k] = 1
-            np.random.shuffle(arr)
-            idxs[m] = arr
-
-        idxs = idxs.astype('int')
-        sampler = SubsetRandomSampler(np.where(idxs)[0])
-    else:
-        sampler = None
-
-    dataloader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        num_workers=args.workers,
-        sampler=sampler,
-    )
-
-    return DataInfo(dataloader=dataloader, sampler=sampler)
+    rocal_cpu = True
+    num_thread = 1
+    valdir = data_path
+    crop = 224
+    pipe_val = val_pipeline(valdir, args.batch_size, args.device, args.world_size, num_thread, crop, rocal_cpu, wds=False)
+    pipe_val.build()
+    dataloader = ROCALClassificationIterator(pipe_val, device="cpu" if rocal_cpu else "cuda", device_id = args.device)
+    return DataInfo(dataloader=dataloader, sampler=None)
 
 
 def count_samples(dataloader):
@@ -325,11 +317,66 @@ class ResampledShards2(IterableDataset):
                 yield dict(url=self.rng.choices(self.urls, weights=self.weights, k=1)[0])
 
 
+def train_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop, rocal_cpu):
+    print("\n DATASET PATH OF TRAIN PIPELINE", data_path)
+    # print("type pf local rank",type(int(local_rank)))
+    # print(int(local_rank))
+    pipe = Pipeline(batch_size=batch_size, num_threads=8, device_id=torch.distributed.get_rank(), seed=torch.distributed.get_rank()+10, rocal_cpu=rocal_cpu, tensor_dtype = types.FLOAT, tensor_layout=types.NCHW, prefetch_queue_depth = 6, mean = [0.485 * 255,0.456 * 255,0.406 * 255], std = [0.229 * 255,0.224 * 255,0.225 * 255], output_memory_type = types.HOST_MEMORY if rocal_cpu else types.DEVICE_MEMORY)
+    with pipe:
+        img_raw = fn.readers.webdataset(
+        path=data_path, ext=[{'jpg', 'json', 'txt'}], missing_components_behavior = types.SKIP)
+        decode = fn.decoders.webdataset(img_raw, file_root=data_path, color_format=types.RGB,max_decoded_width=1510, max_decoded_height=1024, shard_id=torch.distributed.get_rank(), num_shards=world_size)
+        # jpegs, labels = fn.readers.file(file_root=data_path)
+        rocal_device = 'cpu' if rocal_cpu else 'gpu'
+        # decode = fn.decoders.image_slice(jpegs, output_type=types.RGB,
+        #                                 file_root=data_path, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=True, last_batch_policy=types.LAST_BATCH_FILL, stick_to_shard=True)
+        res = fn.resize(decode, resize_width=224, resize_height=224, output_layout = types.NHWC, output_dtype = types.UINT8, interpolation_type=types.TRIANGULAR_INTERPOLATION)
+        flip_coin = fn.random.coin_flip(probability=0.5)
+        cmnp = fn.crop_mirror_normalize(res,
+                                        output_layout = types.NCHW,
+                                        output_dtype = types.FLOAT,
+                                        crop=(crop, crop),
+                                        mirror=flip_coin,
+                                        mean=[0.485 * 255,0.456 * 255,0.406 * 255],
+                                        std=[0.229 * 255,0.224 * 255,0.225 * 255])
+        pipe.set_outputs(cmnp)
+    print('rocal "{0}" variant'.format(rocal_device))
+    return pipe
+
+def val_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop, rocal_cpu, wds):
+    print("\n DATASET PATH OF VAL PIPELINE", data_path)
+    pipe = Pipeline(batch_size=batch_size, num_threads=8, device_id=torch.distributed.get_rank(), seed=torch.distributed.get_rank() + 10, rocal_cpu=rocal_cpu, tensor_dtype = types.FLOAT, tensor_layout=types.NCHW, prefetch_queue_depth = 6, mean = [0.485 * 255,0.456 * 255,0.406 * 255], std = [0.229 * 255,0.224 * 255,0.225 * 255], output_memory_type = types.HOST_MEMORY if rocal_cpu else types.DEVICE_MEMORY)
+    with pipe:
+        rocal_device = 'cpu' if rocal_cpu else 'gpu'
+        if wds:
+            img_raw = fn.readers.webdataset(
+            path=data_path, ext=[{'jpg', 'txt'}], missing_components_behavior = types.SKIP)
+            decode = fn.decoders.webdataset(img_raw, file_root=data_path, color_format=types.RGB,max_decoded_width=512, max_decoded_height=512, shard_id=torch.distributed.get_rank(), num_shards=world_size)
+        else:
+            jpegs, labels = fn.readers.file(file_root=data_path)
+            decode = fn.decoders.image(jpegs,file_root=data_path, max_decoded_width=1000, max_decoded_height=1000, output_type=types.RGB, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=False, last_batch_policy=types.LAST_BATCH_PARTIAL)
+        res = fn.resize(decode, resize_shorter = 256, scaling_mode=types.SCALING_MODE_NOT_SMALLER, interpolation_type=types.TRIANGULAR_INTERPOLATION, output_layout = types.NHWC, output_dtype = types.UINT8)
+        cmnp = fn.crop_mirror_normalize(res,
+                                        output_layout = types.NCHW,
+                                        output_dtype = types.FLOAT,
+                                        crop=(224, 224),
+                                        mirror=0,
+                                        mean=[0.485 * 255,0.456 * 255,0.406 * 255],
+                                        std=[0.229 * 255,0.224 * 255,0.225 * 255])
+        pipe.set_outputs(cmnp)
+    print('rocal "{0}" variant'.format(rocal_device))
+    return pipe
+
 def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None):
+    print("Inside get_wds_dataset")
     input_shards = args.train_data if is_train else args.val_data
+    print("input shards", input_shards)
+    # exit(0)
+
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
-
+    print("\n resampled", resampled)
+    # exit(0)
     num_shards = None
     if is_train:
         if args.train_num_samples is not None:
@@ -346,60 +393,28 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
 
     shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
 
-    if is_train and args.train_data_upsampling_factors is not None:
-        assert resampled, "--train_data_upsampling_factors is only supported when sampling with replacement (with --dataset-resampled)."
-    
-    if resampled:
-        pipeline = [ResampledShards2(
-            input_shards,
-            weights=args.train_data_upsampling_factors,
-            deterministic=True,
-            epoch=shared_epoch,
-        )]
-    else:
-        pipeline = [wds.SimpleShardList(input_shards)]
-
-    # at this point we have an iterator over all the shards
+    rocal_cpu = True
+    num_thread = 1
     if is_train:
-        if not resampled:
-            pipeline.extend([
-                detshuffle2(
-                    bufsize=_SHARD_SHUFFLE_SIZE,
-                    initial=_SHARD_SHUFFLE_INITIAL,
-                    seed=args.seed,
-                    epoch=shared_epoch,
-                ),
-                wds.split_by_node,
-                wds.split_by_worker,
-            ])
-        pipeline.extend([
-            # at this point, we have an iterator over the shards assigned to each worker at each node
-            tarfile_to_samples_nothrow,  # wds.tarfile_to_samples(handler=log_and_continue),
-            wds.shuffle(
-                bufsize=_SAMPLE_SHUFFLE_SIZE,
-                initial=_SAMPLE_SHUFFLE_INITIAL,
-            ),
-        ])
+        traindir = os.path.dirname(input_shards) + "/"
+        crop = 224
+        pipe_train = train_pipeline(traindir, args.batch_size, args.device, args.world_size, num_thread, crop, rocal_cpu)
+        pipe_train.build()
+        dataloader = ROCALClassificationIterator(pipe_train, device="cpu" if rocal_cpu else "cuda", device_id = args.device)
     else:
-        pipeline.extend([
-            wds.split_by_worker,
-            # at this point, we have an iterator over the shards assigned to each worker
-            wds.tarfile_to_samples(handler=log_and_continue),
-        ])
-    pipeline.extend([
-        wds.select(filter_no_caption_or_no_image),
-        wds.decode("pilrgb", handler=log_and_continue),
-        wds.rename(image="jpg;png;jpeg;webp", text="txt"),
-        wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
-        wds.to_tuple("image", "text"),
-        wds.batched(args.batch_size, partial=not is_train)
-    ])
-
-    dataset = wds.DataPipeline(*pipeline)
+        valdir = os.path.dirname(input_shards) + "/"
+        crop = 224
+        pipe_val = val_pipeline(valdir, args.batch_size, args.device, args.world_size, num_thread, crop, rocal_cpu, wds=True)
+        pipe_val.build()
+        dataloader = ROCALClassificationIterator(pipe_val, device="cpu" if rocal_cpu else "cuda", device_id = args.device)
+    # dataset = wds.DataPipeline(*pipeline)
 
     if is_train:
         if not resampled:
             num_shards = num_shards or len(expand_urls(input_shards)[0])
+            print("\n num_shards", num_shards)
+            print("\n args.workers", args.workers)
+            print("\n args.world_size", args.world_size)
             assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
         # roll over and repeat a few samples to get same number of full batches on each node
         round_fn = math.floor if floor else math.ceil
@@ -409,38 +424,22 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
         num_batches = num_worker_batches * num_workers
         num_samples = num_batches * global_batch_size
-        dataset = dataset.with_epoch(num_worker_batches)  # each worker is iterating over this
+        # dataset = dataset.with_epoch(num_worker_batches)  # each worker is iterating over this
     else:
         # last batches are partial, eval is done on single (master) node
         num_batches = math.ceil(num_samples / args.batch_size)
 
-    dataloader = wds.WebLoader(
-        dataset,
-        batch_size=None,
-        shuffle=False,
-        num_workers=args.workers,
-        persistent_workers=args.workers > 0,
-    )
 
-    # FIXME not clear which approach is better, with_epoch before vs after dataloader?
-    # hoping to resolve via https://github.com/webdataset/webdataset/issues/169
-    # if is_train:
-    #     # roll over and repeat a few samples to get same number of full batches on each node
-    #     global_batch_size = args.batch_size * args.world_size
-    #     num_batches = math.ceil(num_samples / global_batch_size)
-    #     num_workers = max(1, args.workers)
-    #     num_batches = math.ceil(num_batches / num_workers) * num_workers
-    #     num_samples = num_batches * global_batch_size
-    #     dataloader = dataloader.with_epoch(num_batches)
-    # else:
-    #     # last batches are partial, eval is done on single (master) node
-    #     num_batches = math.ceil(num_samples / args.batch_size)
-
-    # add meta-data to dataloader instance for convenience
-    dataloader.num_batches = num_batches
-    dataloader.num_samples = num_samples
-
-    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
+    print("dataloader", dataloader)
+    
+    # dataloader.num_batches = num_batches
+    # # print("\n num_batches", num_batches)
+    # dataloader.num_samples = num_samples
+    # print("\n num_samples", num_samples)
+    # for data in dataloader:
+    #     print(len(data))
+    # exit(0)
+    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch, num_samples_and_batches=NumSamplesAndBatches(num_samples=num_samples, num_batches=num_batches))
 
 
 def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
@@ -524,6 +523,7 @@ def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
 
 
 def get_dataset_fn(data_path, dataset_type):
+    print("Calls the dataset fn")
     if dataset_type == "webdataset":
         return get_wds_dataset
     elif dataset_type == "csv":
@@ -546,7 +546,8 @@ def get_dataset_fn(data_path, dataset_type):
 def get_data(args, preprocess_fns, epoch=0, tokenizer=None):
     preprocess_train, preprocess_val = preprocess_fns
     data = {}
-
+    # print("preprocess_train", preprocess_train)
+    # print("preprocess_val", preprocess_val)
     if args.train_data or args.dataset_type == "synthetic":
         data["train"] = get_dataset_fn(args.train_data, args.dataset_type)(
             args, preprocess_train, is_train=True, epoch=epoch, tokenizer=tokenizer)

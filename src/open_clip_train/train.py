@@ -72,8 +72,8 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
 
     data['train'].set_epoch(epoch)  # set epoch in process safe manner via sampler or shared_epoch
     dataloader = data['train'].dataloader
-    num_batches_per_epoch = dataloader.num_batches // args.accum_freq
-    sample_digits = math.ceil(math.log(dataloader.num_samples + 1, 10))
+    num_batches_per_epoch = data['train'].num_samples_and_batches.num_batches // args.accum_freq
+    sample_digits = math.ceil(math.log(data['train'].num_samples_and_batches.num_samples + 1, 10))
 
     if args.accum_freq > 1:
         accum_images, accum_texts, accum_features = [], [], {}
@@ -90,6 +90,18 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             scheduler(step)
 
         images, texts = batch
+        # Stack the arrays along a new dimension (e.g., rows)
+        stacked_array = np.stack(texts)
+
+        # Convert the stacked numpy array to a PyTorch tensor
+        tensor = torch.tensor(stacked_array)
+        print("text/ batch[1]",batch[1])
+        print(type(batch[0]))
+        print(type(batch[1]))
+        print("tensor", tensor)
+        
+        # print(type(batch[2]))
+        exit(0)
         images = images.to(device=device, dtype=input_dtype, non_blocking=True)
         texts = texts.to(device=device, non_blocking=True)
 
@@ -194,7 +206,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
         if is_master(args) and (i_accum % args.log_every_n_steps == 0 or batch_count == num_batches_per_epoch):
             batch_size = len(images)
             num_samples = batch_count * batch_size * args.accum_freq * args.world_size
-            samples_per_epoch = dataloader.num_samples
+            samples_per_epoch = data['train'].num_samples_and_batches.num_samples
             percent_complete = 100.0 * batch_count / num_batches_per_epoch
 
             # NOTE loss is coarsely sampled, just master node and per log update
@@ -264,7 +276,7 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
     if 'val' in data and (args.val_frequency and ((epoch % args.val_frequency) == 0 or epoch == args.epochs)):
         dataloader = data['val'].dataloader
         num_samples = 0
-        samples_per_val = dataloader.num_samples
+        samples_per_val = data['val'].num_samples_and_batches.num_samples
 
         # FIXME this does not scale past small eval datasets
         # all_image_features @ all_text_features will blow up memory and compute very quickly
@@ -347,7 +359,7 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
         assert wandb is not None, 'Please install wandb.'
         if 'train' in data:
             dataloader = data['train'].dataloader
-            num_batches_per_epoch = dataloader.num_batches // args.accum_freq
+            num_batches_per_epoch = data['train'].num_samples_and_batches.num_batches // args.accum_freq
             step = num_batches_per_epoch * epoch
         else:
             step = None
