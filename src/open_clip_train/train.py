@@ -60,8 +60,12 @@ def backward(total_loss, scaler):
     else:
         total_loss.backward()
 
+# Function to convert a single NumPy array of ASCII values to a string
+def ascii_array_to_string(array):
+    ascii_values = array.tolist()
+    return ''.join(chr(value) for value in ascii_values)
 
-def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=None):
+def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=None, tokenizer=None):
     device = torch.device(args.device)
     autocast = get_autocast(args.precision)
     input_dtype = get_input_dtype(args.precision)
@@ -88,20 +92,11 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
 
         if not args.skip_scheduler:
             scheduler(step)
-
-        images, texts = batch
-        # Stack the arrays along a new dimension (e.g., rows)
-        stacked_array = np.stack(texts)
-
-        # Convert the stacked numpy array to a PyTorch tensor
-        tensor = torch.tensor(stacked_array)
-        print("text/ batch[1]",batch[1])
-        print(type(batch[0]))
-        print(type(batch[1]))
-        print("tensor", tensor)
-        
-        # print(type(batch[2]))
-        exit(0)
+        [images], [_, texts_array] = batch
+        # Convert each NumPy array of ASCII values to a string
+        list_of_strings = [ascii_array_to_string(array) for array in texts_array]
+        # Tokenize the list of strings using the tokenizer
+        texts = tokenizer(list_of_strings)
         images = images.to(device=device, dtype=input_dtype, non_blocking=True)
         texts = texts.to(device=device, non_blocking=True)
 
@@ -285,10 +280,15 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
         all_image_features, all_text_features = [], []
         with torch.inference_mode():
             for i, batch in enumerate(dataloader):
-                images, texts = batch
+                [images], [texts_array] = batch
+                # Convert each NumPy array of ASCII values to a string
+                list_of_strings = [ascii_array_to_string(array) for array in texts_array]
+                # Tokenize the list of strings using the tokenizer
+                texts = tokenizer(list_of_strings)
+
                 images = images.to(device=device, dtype=input_dtype, non_blocking=True)
                 texts = texts.to(device=device, non_blocking=True)
-
+                
                 with autocast():
                     model_out = model(images, texts)
                     image_features = model_out["image_features"]
