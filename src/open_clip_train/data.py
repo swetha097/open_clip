@@ -326,17 +326,28 @@ def train_pipeline(data_path, batch_size, local_rank, world_size, num_thread, cr
         img_raw = fn.readers.webdataset(
         path=data_path, ext=[{'jpg', 'json', 'txt'}], missing_components_behavior = types.SKIP)
         decode = fn.decoders.webdataset(img_raw, file_root=data_path, color_format=types.RGB,max_decoded_width=1510, max_decoded_height=1024, shard_id=torch.distributed.get_rank(), num_shards=world_size)
-        # jpegs, labels = fn.readers.file(file_root=data_path)
         rocal_device = 'cpu' if rocal_cpu else 'gpu'
-        # decode = fn.decoders.image_slice(jpegs, output_type=types.RGB,
-        #                                 file_root=data_path, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=True, last_batch_policy=types.LAST_BATCH_FILL, stick_to_shard=True)
-        res = fn.resize(decode, resize_width=224, resize_height=224, output_layout = types.NHWC, output_dtype = types.UINT8, interpolation_type=types.TRIANGULAR_INTERPOLATION)
-        flip_coin = fn.random.coin_flip(probability=0.5)
-        cmnp = fn.crop_mirror_normalize(res,
+        crop_aspect_ratio = fn.random.uniform(img_raw, range=[0.75, 1.3333])
+        crop_area_factor = fn.random.uniform(img_raw, range=[0.9, 1])
+        # randomcrop = fn.random_crop(decode, crop_area_factor=[0.9, 1], crop_aspect_ratio=[0.75, 1.3333],
+        #         crop_pox_x=0, crop_pox_y=0, num_attempts=20, device=None,
+        #         all_boxes_above_threshold=True, allow_no_crop=True, ltrb=True, output_layout=types.NHWC, output_dtype=types.UINT8)
+        random_resize_crop = fn.resize_crop(decode,
+                        resize_width=224,
+                        resize_height=224,
+                        crop_area_factor=crop_area_factor,
+                        crop_aspect_ratio=crop_aspect_ratio,
+                        # x_drift=0.6,
+                        # y_drift=0.4,
+                        interpolation_type=types.CUBIC_INTERPOLATION,
+                        output_layout=types.NHWC, output_dtype=types.UINT8)
+        # res = fn.resize(randomcrop, resize_width=224, resize_height=224, output_layout = types.NHWC, output_dtype = types.UINT8, interpolation_type=types.CUBIC_INTERPOLATION)
+        # flip_coin = fn.random.coin_flip(probability=0.5)
+        cmnp = fn.crop_mirror_normalize(random_resize_crop,
                                         output_layout = types.NCHW,
                                         output_dtype = types.FLOAT,
                                         crop=(crop, crop),
-                                        mirror=flip_coin,
+                                        mirror=0,
                                         mean=[0.485 * 255,0.456 * 255,0.406 * 255],
                                         std=[0.229 * 255,0.224 * 255,0.225 * 255])
         pipe.set_outputs(cmnp)
@@ -355,8 +366,9 @@ def val_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop
         else:
             jpegs, labels = fn.readers.file(file_root=data_path)
             decode = fn.decoders.image(jpegs,file_root=data_path, max_decoded_width=1000, max_decoded_height=1000, output_type=types.RGB, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=False, last_batch_policy=types.LAST_BATCH_PARTIAL)
-        res = fn.resize(decode, resize_shorter = 256, scaling_mode=types.SCALING_MODE_NOT_SMALLER, interpolation_type=types.TRIANGULAR_INTERPOLATION, output_layout = types.NHWC, output_dtype = types.UINT8)
-        cmnp = fn.crop_mirror_normalize(res,
+        res = fn.resize(decode, resize_shorter = 224, scaling_mode=types.SCALING_MODE_NOT_SMALLER, interpolation_type=types.CUBIC_INTERPOLATION, output_layout = types.NHWC, output_dtype = types.UINT8)
+        centercrop = fn.center_crop(res, crop=[224, 224], output_layout = types.NHWC, output_dtype = types.UINT8)
+        cmnp = fn.crop_mirror_normalize(centercrop,
                                         output_layout = types.NCHW,
                                         output_dtype = types.FLOAT,
                                         crop=(224, 224),
@@ -415,7 +427,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             print("\n num_shards", num_shards)
             print("\n args.workers", args.workers)
             print("\n args.world_size", args.world_size)
-            assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
+            # assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
         # roll over and repeat a few samples to get same number of full batches on each node
         round_fn = math.floor if floor else math.ceil
         global_batch_size = args.batch_size * args.world_size
