@@ -362,7 +362,7 @@ def val_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop
         if wds:
             img_raw = fn.readers.webdataset(
             path=data_path, ext=[{'jpg', 'txt'}], missing_components_behavior = types.SKIP)
-            decode = fn.decoders.webdataset(img_raw, file_root=data_path, color_format=types.RGB,max_decoded_width=512, max_decoded_height=512, shard_id=torch.distributed.get_rank(), num_shards=world_size)
+            decode = fn.decoders.webdataset(img_raw, last_batch_policy=types.LAST_BATCH_PARTIAL, file_root=data_path, color_format=types.RGB,max_decoded_width=512, max_decoded_height=512, shard_id=torch.distributed.get_rank(), num_shards=world_size)
         else:
             jpegs, labels = fn.readers.file(file_root=data_path)
             decode = fn.decoders.image(jpegs,file_root=data_path, max_decoded_width=1000, max_decoded_height=1000, output_type=types.RGB, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=False, last_batch_policy=types.LAST_BATCH_PARTIAL)
