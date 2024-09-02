@@ -325,7 +325,7 @@ def train_pipeline(data_path, batch_size, local_rank, world_size, num_thread, cr
     with pipe:
         img_raw = fn.readers.webdataset(
         path=data_path, ext=[{'jpg', 'json', 'txt'}], missing_components_behavior = types.SKIP)
-        decode = fn.decoders.webdataset(img_raw, file_root=data_path, color_format=types.RGB,max_decoded_width=1510, max_decoded_height=1024, shard_id=torch.distributed.get_rank(), num_shards=world_size)
+        decode = fn.decoders.webdataset(img_raw, file_root=data_path, color_format=types.RGB,max_decoded_width=1510, max_decoded_height=1024, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=True)
         rocal_device = 'cpu' if rocal_cpu else 'gpu'
         crop_aspect_ratio = fn.random.uniform(img_raw, range=[0.75, 1.3333])
         crop_area_factor = fn.random.uniform(img_raw, range=[0.9, 1])
