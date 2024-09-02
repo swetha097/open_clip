@@ -348,8 +348,8 @@ def train_pipeline(data_path, batch_size, local_rank, world_size, num_thread, cr
                                         output_dtype = types.FLOAT,
                                         crop=(crop, crop),
                                         mirror=0,
-                                        mean=[0.485 * 255,0.456 * 255,0.406 * 255],
-                                        std=[0.229 * 255,0.224 * 255,0.225 * 255])
+                                        mean=[0.48145466 * 255, 0.4578275 * 255, 0.40821073 * 255],
+                                        std=[0.26862954 * 255, 0.26130258 * 255, 0.27577711 * 255])
         pipe.set_outputs(cmnp)
     print('rocal "{0}" variant'.format(rocal_device))
     return pipe
@@ -373,8 +373,8 @@ def val_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop
                                         output_dtype = types.FLOAT,
                                         crop=(224, 224),
                                         mirror=0,
-                                        mean=[0.485 * 255,0.456 * 255,0.406 * 255],
-                                        std=[0.229 * 255,0.224 * 255,0.225 * 255])
+                                        mean=[0.48145466 * 255, 0.4578275 * 255, 0.40821073 * 255],
+                                        std=[0.26862954 * 255, 0.26130258 * 255, 0.27577711 * 255])
         pipe.set_outputs(cmnp)
     print('rocal "{0}" variant'.format(rocal_device))
     return pipe
