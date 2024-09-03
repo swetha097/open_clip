@@ -359,7 +359,7 @@ def val_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop
     if wds:
         pipe = Pipeline(batch_size=batch_size, num_threads=8, device_id=0, seed=torch.distributed.get_rank() + 10, rocal_cpu=rocal_cpu, tensor_dtype = types.FLOAT, tensor_layout=types.NCHW, prefetch_queue_depth = 6, mean = [0.485 * 255,0.456 * 255,0.406 * 255], std = [0.229 * 255,0.224 * 255,0.225 * 255], output_memory_type = types.HOST_MEMORY if rocal_cpu else types.DEVICE_MEMORY)
     else:
-        pipe = Pipeline(batch_size=batch_size, num_threads=8, device_id=0, seed=torch.distributed.get_rank() + 10, rocal_cpu=rocal_cpu, tensor_dtype = types.FLOAT, tensor_layout=types.NCHW, prefetch_queue_depth = 6, mean = [0.485 * 255,0.456 * 255,0.406 * 255], std = [0.229 * 255,0.224 * 255,0.225 * 255], output_memory_type = types.HOST_MEMORY if rocal_cpu else types.DEVICE_MEMORY)
+        pipe = Pipeline(batch_size=batch_size, num_threads=8, device_id=torch.distributed.get_rank(), seed=torch.distributed.get_rank() + 10, rocal_cpu=rocal_cpu, tensor_dtype = types.FLOAT, tensor_layout=types.NCHW, prefetch_queue_depth = 6, mean = [0.485 * 255,0.456 * 255,0.406 * 255], std = [0.229 * 255,0.224 * 255,0.225 * 255], output_memory_type = types.HOST_MEMORY if rocal_cpu else types.DEVICE_MEMORY)
 
     with pipe:
         rocal_device = 'cpu' if rocal_cpu else 'gpu'
@@ -369,7 +369,7 @@ def val_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop
             decode = fn.decoders.webdataset(img_raw, last_batch_policy=types.LAST_BATCH_PARTIAL, file_root=data_path, color_format=types.RGB,max_decoded_width=512, max_decoded_height=512, shard_id=0, num_shards=1)
         else:
             jpegs, labels = fn.readers.file(file_root=data_path)
-            decode = fn.decoders.image(jpegs,file_root=data_path, max_decoded_width=1000, max_decoded_height=1000, output_type=types.RGB, shard_id=0, num_shards=1, random_shuffle=False, last_batch_policy=types.LAST_BATCH_PARTIAL)
+            decode = fn.decoders.image(jpegs,file_root=data_path, max_decoded_width=1000, max_decoded_height=1000, output_type=types.RGB, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=False, last_batch_policy=types.LAST_BATCH_PARTIAL)
         res = fn.resize(decode, resize_shorter = 224, scaling_mode=types.SCALING_MODE_NOT_SMALLER, interpolation_type=types.CUBIC_INTERPOLATION, output_layout = types.NHWC, output_dtype = types.UINT8)
         centercrop = fn.center_crop(res, crop=[224, 224], output_layout = types.NHWC, output_dtype = types.UINT8)
         cmnp = fn.crop_mirror_normalize(centercrop,
