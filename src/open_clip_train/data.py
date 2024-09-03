@@ -321,7 +321,7 @@ def train_pipeline(data_path, batch_size, local_rank, world_size, num_thread, cr
     print("\n DATASET PATH OF TRAIN PIPELINE", data_path)
     # print("type pf local rank",type(int(local_rank)))
     # print(int(local_rank))
-    pipe = Pipeline(batch_size=batch_size, num_threads=8, device_id=torch.distributed.get_rank(), seed=torch.distributed.get_rank()+10, rocal_cpu=rocal_cpu, tensor_dtype = types.FLOAT, tensor_layout=types.NCHW, prefetch_queue_depth = 6, mean = [0.485 * 255,0.456 * 255,0.406 * 255], std = [0.229 * 255,0.224 * 255,0.225 * 255], output_memory_type = types.HOST_MEMORY if rocal_cpu else types.DEVICE_MEMORY)
+    pipe = Pipeline(batch_size=batch_size, num_threads=8, device_id=torch.distributed.get_rank(), seed=torch.distributed.get_rank()+10, rocal_cpu=rocal_cpu, tensor_dtype = types.FLOAT, tensor_layout=types.NCHW, prefetch_queue_depth = 6, mean = [0.48145466 * 255, 0.4578275 * 255, 0.40821073 * 255], std = [0.229 * 255,0.224 * 255,0.225 * 255], output_memory_type = types.HOST_MEMORY if rocal_cpu else types.DEVICE_MEMORY)
     with pipe:
         img_raw = fn.readers.webdataset(
         path=data_path, ext=[{'jpg', 'json', 'txt'}], missing_components_behavior = types.SKIP)
@@ -357,9 +357,9 @@ def train_pipeline(data_path, batch_size, local_rank, world_size, num_thread, cr
 def val_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop, rocal_cpu, wds):
     print("\n DATASET PATH OF VAL PIPELINE", data_path)
     if wds:
-        pipe = Pipeline(batch_size=batch_size, num_threads=8, device_id=0, seed=torch.distributed.get_rank() + 10, rocal_cpu=rocal_cpu, tensor_dtype = types.FLOAT, tensor_layout=types.NCHW, prefetch_queue_depth = 6, mean = [0.485 * 255,0.456 * 255,0.406 * 255], std = [0.229 * 255,0.224 * 255,0.225 * 255], output_memory_type = types.HOST_MEMORY if rocal_cpu else types.DEVICE_MEMORY)
+        pipe = Pipeline(batch_size=batch_size, num_threads=8, device_id=0, seed=torch.distributed.get_rank() + 10, rocal_cpu=rocal_cpu, tensor_dtype = types.FLOAT, tensor_layout=types.NCHW, prefetch_queue_depth = 6, mean = [0.48145466 * 255, 0.4578275 * 255, 0.40821073 * 255], std = [0.229 * 255,0.224 * 255,0.225 * 255], output_memory_type = types.HOST_MEMORY if rocal_cpu else types.DEVICE_MEMORY)
     else:
-        pipe = Pipeline(batch_size=batch_size, num_threads=8, device_id=torch.distributed.get_rank(), seed=torch.distributed.get_rank() + 10, rocal_cpu=rocal_cpu, tensor_dtype = types.FLOAT, tensor_layout=types.NCHW, prefetch_queue_depth = 6, mean = [0.485 * 255,0.456 * 255,0.406 * 255], std = [0.229 * 255,0.224 * 255,0.225 * 255], output_memory_type = types.HOST_MEMORY if rocal_cpu else types.DEVICE_MEMORY)
+        pipe = Pipeline(batch_size=batch_size, num_threads=8, device_id=torch.distributed.get_rank(), seed=torch.distributed.get_rank() + 10, rocal_cpu=rocal_cpu, tensor_dtype = types.FLOAT, tensor_layout=types.NCHW, prefetch_queue_depth = 6, mean = [0.26862954 * 255, 0.26130258 * 255, 0.27577711 * 255], std = [0.229 * 255,0.224 * 255,0.225 * 255], output_memory_type = types.HOST_MEMORY if rocal_cpu else types.DEVICE_MEMORY)
 
     with pipe:
         rocal_device = 'cpu' if rocal_cpu else 'gpu'
