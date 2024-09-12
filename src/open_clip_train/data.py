@@ -321,11 +321,12 @@ def train_pipeline(data_path, batch_size, local_rank, world_size, num_thread, cr
     print("\n DATASET PATH OF TRAIN PIPELINE", data_path)
     # print("type pf local rank",type(int(local_rank)))
     # print(int(local_rank))
+    index_file = "/dataset/cc3m-wds/train_idx/"
     pipe = Pipeline(batch_size=batch_size, num_threads=8, device_id=torch.distributed.get_rank(), seed=torch.distributed.get_rank()+10, rocal_cpu=rocal_cpu, tensor_dtype = types.FLOAT, tensor_layout=types.NCHW, prefetch_queue_depth = 6, mean = [0.48145466 * 255, 0.4578275 * 255, 0.40821073 * 255], std = [0.229 * 255,0.224 * 255,0.225 * 255], output_memory_type = types.HOST_MEMORY if rocal_cpu else types.DEVICE_MEMORY)
     with pipe:
         img_raw = fn.readers.webdataset(
-        path=data_path, ext=[{'jpg', 'json', 'txt'}], missing_components_behavior = types.SKIP)
-        decode = fn.decoders.webdataset(img_raw, file_root=data_path, color_format=types.RGB,max_decoded_width=1510, max_decoded_height=1024, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=True)
+        path=data_path, ext=[{'jpg', 'json', 'txt'}], missing_components_behavior = types.SKIP, index_paths = index_file)
+        decode = fn.decoders.webdataset(img_raw, file_root=data_path, index_path = index_file, color_format=types.RGB,max_decoded_width=1510, max_decoded_height=1024, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=True)
         rocal_device = 'cpu' if rocal_cpu else 'gpu'
         crop_aspect_ratio = fn.random.uniform(img_raw, range=[0.75, 1.3333])
         crop_area_factor = fn.random.uniform(img_raw, range=[0.9, 1])
@@ -356,6 +357,7 @@ def train_pipeline(data_path, batch_size, local_rank, world_size, num_thread, cr
 
 def val_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop, rocal_cpu, wds):
     print("\n DATASET PATH OF VAL PIPELINE", data_path)
+    index_file = "/dataset/cc3m-wds/val_idx/"
     if wds:
         pipe = Pipeline(batch_size=batch_size, num_threads=8, device_id=0, seed=torch.distributed.get_rank() + 10, rocal_cpu=rocal_cpu, tensor_dtype = types.FLOAT, tensor_layout=types.NCHW, prefetch_queue_depth = 6, mean = [0.48145466 * 255, 0.4578275 * 255, 0.40821073 * 255], std = [0.229 * 255,0.224 * 255,0.225 * 255], output_memory_type = types.HOST_MEMORY if rocal_cpu else types.DEVICE_MEMORY)
     else:
@@ -365,8 +367,8 @@ def val_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop
         rocal_device = 'cpu' if rocal_cpu else 'gpu'
         if wds:
             img_raw = fn.readers.webdataset(
-            path=data_path, ext=[{'jpg', 'txt'}], missing_components_behavior = types.SKIP)
-            decode = fn.decoders.webdataset(img_raw, last_batch_policy=types.LAST_BATCH_PARTIAL, file_root=data_path, color_format=types.RGB,max_decoded_width=512, max_decoded_height=512, shard_id=0, num_shards=1)
+            path=data_path, ext=[{'jpg', 'txt'}], missing_components_behavior = types.SKIP, index_paths = index_file)
+            decode = fn.decoders.webdataset(img_raw, last_batch_policy=types.LAST_BATCH_PARTIAL, index_path = index_file, file_root=data_path, color_format=types.RGB,max_decoded_width=512, max_decoded_height=512, shard_id=0, num_shards=1)
         else:
             jpegs, labels = fn.readers.file(file_root=data_path)
             decode = fn.decoders.image(jpegs,file_root=data_path, max_decoded_width=1000, max_decoded_height=1000, output_type=types.RGB, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=False, last_batch_policy=types.LAST_BATCH_PARTIAL)
