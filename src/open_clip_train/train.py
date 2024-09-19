@@ -62,7 +62,7 @@ def backward(total_loss, scaler):
 
 # Function to convert a single NumPy array of ASCII values to a string
 def ascii_array_to_string(array):
-    ascii_values = array.tolist()
+    ascii_values = array.tolist() if not isinstance(array, list) else array
     return ''.join(chr(value) for value in ascii_values)
 
 def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=None, tokenizer=None):
@@ -93,6 +93,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
         if not args.skip_scheduler:
             scheduler(step)
         [images], [_, texts_array] = batch
+        continue
         # Convert each NumPy array of ASCII values to a string
         list_of_strings = [ascii_array_to_string(array) for array in texts_array]
         # Tokenize the list of strings using the tokenizer
@@ -281,6 +282,7 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
         with torch.inference_mode():
             for i, batch in enumerate(dataloader):
                 [images], [texts_array] = batch
+                continue
                 # Convert each NumPy array of ASCII values to a string
                 list_of_strings = [ascii_array_to_string(array) for array in texts_array]
                 # Tokenize the list of strings using the tokenizer

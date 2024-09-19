@@ -48,6 +48,12 @@ def parse_args(args):
         help="Path to file(s) with validation data",
     )
     parser.add_argument(
+        "--training-type",
+        type=str,
+        default=None,
+        help="rocal_cpu or rocal_gpu",
+    )
+    parser.add_argument(
         "--train-num-samples",
         type=int,
         default=None,

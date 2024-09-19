@@ -143,13 +143,19 @@ def get_imagenet(args, preprocess_fns, split):
             data_path = args.imagenet_val
             preprocess_fn = preprocess_val
         assert data_path
-    rocal_cpu = True
+    rocal_cpu = False
     num_thread = 1
     valdir = data_path
     crop = 224
     pipe_val = val_pipeline(valdir, args.batch_size, args.device, args.world_size, num_thread, crop, rocal_cpu, wds=False)
     pipe_val.build()
-    dataloader = ROCALClassificationIterator(pipe_val, device="cpu" if rocal_cpu else "cuda", device_id = args.device)
+    dataloader = ROCALClassificationIterator(pipe_val, device="cpu" if rocal_cpu else "cuda", device_id = torch.distributed.get_rank())
+    # val_loader_list = []
+    # for [images], target in dataloader:
+    #     images = images
+    #     target = target
+    #     val_loader_list.append((images.clone(), target))
+    # del dataloader
     return DataInfo(dataloader=dataloader, sampler=None)
 
 
@@ -319,31 +325,22 @@ class ResampledShards2(IterableDataset):
 
 def train_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop, rocal_cpu):
     print("\n DATASET PATH OF TRAIN PIPELINE", data_path)
-    # print("type pf local rank",type(int(local_rank)))
-    # print(int(local_rank))
-    index_file = "/dataset/cc3m-wds/train_idx/"
+    print("rocal_cpu", rocal_cpu)
     pipe = Pipeline(batch_size=batch_size, num_threads=8, device_id=torch.distributed.get_rank(), seed=torch.distributed.get_rank()+10, rocal_cpu=rocal_cpu, tensor_dtype = types.FLOAT, tensor_layout=types.NCHW, prefetch_queue_depth = 6, mean = [0.48145466 * 255, 0.4578275 * 255, 0.40821073 * 255], std = [0.229 * 255,0.224 * 255,0.225 * 255], output_memory_type = types.HOST_MEMORY if rocal_cpu else types.DEVICE_MEMORY)
     with pipe:
         img_raw = fn.readers.webdataset(
-        path=data_path, ext=[{'jpg', 'json', 'txt'}], missing_components_behavior = types.SKIP, index_paths = index_file)
-        decode = fn.decoders.webdataset(img_raw, file_root=data_path, index_path = index_file, color_format=types.RGB,max_decoded_width=1510, max_decoded_height=1024, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=True)
+        path=data_path, ext=[{'jpg', 'json', 'txt'}], missing_components_behavior = types.SKIP)
+        decode = fn.decoders.webdataset(img_raw, file_root=data_path, color_format=types.RGB,max_decoded_width=1510, max_decoded_height=1024, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=True)
         rocal_device = 'cpu' if rocal_cpu else 'gpu'
         crop_aspect_ratio = fn.random.uniform(img_raw, range=[0.75, 1.3333])
         crop_area_factor = fn.random.uniform(img_raw, range=[0.9, 1])
-        # randomcrop = fn.random_crop(decode, crop_area_factor=[0.9, 1], crop_aspect_ratio=[0.75, 1.3333],
-        #         crop_pox_x=0, crop_pox_y=0, num_attempts=20, device=None,
-        #         all_boxes_above_threshold=True, allow_no_crop=True, ltrb=True, output_layout=types.NHWC, output_dtype=types.UINT8)
         random_resize_crop = fn.resize_crop(decode,
                         resize_width=224,
                         resize_height=224,
                         crop_area_factor=crop_area_factor,
                         crop_aspect_ratio=crop_aspect_ratio,
-                        # x_drift=0.6,
-                        # y_drift=0.4,
                         interpolation_type=types.CUBIC_INTERPOLATION,
                         output_layout=types.NHWC, output_dtype=types.UINT8)
-        # res = fn.resize(randomcrop, resize_width=224, resize_height=224, output_layout = types.NHWC, output_dtype = types.UINT8, interpolation_type=types.CUBIC_INTERPOLATION)
-        # flip_coin = fn.random.coin_flip(probability=0.5)
         cmnp = fn.crop_mirror_normalize(random_resize_crop,
                                         output_layout = types.NCHW,
                                         output_dtype = types.FLOAT,
@@ -357,7 +354,7 @@ def train_pipeline(data_path, batch_size, local_rank, world_size, num_thread, cr
 
 def val_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop, rocal_cpu, wds):
     print("\n DATASET PATH OF VAL PIPELINE", data_path)
-    index_file = "/dataset/cc3m-wds/val_idx/"
+    print("\n rocal_cpu", rocal_cpu)
     if wds:
         pipe = Pipeline(batch_size=batch_size, num_threads=8, device_id=0, seed=torch.distributed.get_rank() + 10, rocal_cpu=rocal_cpu, tensor_dtype = types.FLOAT, tensor_layout=types.NCHW, prefetch_queue_depth = 6, mean = [0.48145466 * 255, 0.4578275 * 255, 0.40821073 * 255], std = [0.229 * 255,0.224 * 255,0.225 * 255], output_memory_type = types.HOST_MEMORY if rocal_cpu else types.DEVICE_MEMORY)
     else:
@@ -367,8 +364,8 @@ def val_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop
         rocal_device = 'cpu' if rocal_cpu else 'gpu'
         if wds:
             img_raw = fn.readers.webdataset(
-            path=data_path, ext=[{'jpg', 'txt'}], missing_components_behavior = types.SKIP, index_paths = index_file)
-            decode = fn.decoders.webdataset(img_raw, last_batch_policy=types.LAST_BATCH_PARTIAL, index_path = index_file, file_root=data_path, color_format=types.RGB,max_decoded_width=512, max_decoded_height=512, shard_id=0, num_shards=1)
+            path=data_path, ext=[{'jpg', 'txt'}], missing_components_behavior = types.SKIP)
+            decode = fn.decoders.webdataset(img_raw, last_batch_policy=types.LAST_BATCH_PARTIAL, file_root=data_path, color_format=types.RGB,max_decoded_width=512, max_decoded_height=512, shard_id=0, num_shards=1)
         else:
             jpegs, labels = fn.readers.file(file_root=data_path)
             decode = fn.decoders.image(jpegs,file_root=data_path, max_decoded_width=1000, max_decoded_height=1000, output_type=types.RGB, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=False, last_batch_policy=types.LAST_BATCH_PARTIAL)
@@ -411,21 +408,28 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
 
     shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
 
-    rocal_cpu = True
+    rocal_cpu = False
     num_thread = 1
     if is_train:
         traindir = os.path.dirname(input_shards) + "/"
         crop = 224
         pipe_train = train_pipeline(traindir, args.batch_size, args.device, args.world_size, num_thread, crop, rocal_cpu)
         pipe_train.build()
-        dataloader = ROCALClassificationIterator(pipe_train, device="cpu" if rocal_cpu else "cuda", device_id = args.device)
+        dataloader = ROCALClassificationIterator(pipe_train, device="cpu" if rocal_cpu else "cuda", device_id = torch.distributed.get_rank())
     else:
         valdir = os.path.dirname(input_shards) + "/"
         crop = 224
         pipe_val = val_pipeline(valdir, args.batch_size, args.device, args.world_size, num_thread, crop, rocal_cpu, wds=True)
         pipe_val.build()
-        dataloader = ROCALClassificationIterator(pipe_val, device="cpu" if rocal_cpu else "cuda", device_id = args.device)
-    # dataset = wds.DataPipeline(*pipeline)
+        dataloader = ROCALClassificationIterator(pipe_val, device="cpu" if rocal_cpu else "cuda", device_id = torch.distributed.get_rank())
+        '''
+        val_loader_list = []
+        for (images, texts_array) in dataloader:
+            images = images
+            texts_array = texts_array
+            val_loader_list.append((images, texts_array))
+        del dataloader
+        '''
 
     if is_train:
         if not resampled:
@@ -448,16 +452,10 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         num_batches = math.ceil(num_samples / args.batch_size)
 
 
-    print("dataloader", dataloader)
-    
-    # dataloader.num_batches = num_batches
-    # # print("\n num_batches", num_batches)
-    # dataloader.num_samples = num_samples
-    # print("\n num_samples", num_samples)
-    # for data in dataloader:
-    #     print(len(data))
-    # exit(0)
+    # if is_train:
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch, num_samples_and_batches=NumSamplesAndBatches(num_samples=num_samples, num_batches=num_batches))
+    # else:
+        # return DataInfo(dataloader=val_loader_list, shared_epoch=shared_epoch, num_samples_and_batches=NumSamplesAndBatches(num_samples=num_samples, num_batches=num_batches))
 
 
 def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):

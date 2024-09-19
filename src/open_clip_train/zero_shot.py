@@ -23,6 +23,7 @@ def run(model, classifier, dataloader, args):
         for [images], target in tqdm(dataloader, unit_scale=args.batch_size):
             images = images.to(device=args.device, dtype=input_dtype)
             target = target.to(args.device)
+            continue
 
             with autocast():
                 # predict
