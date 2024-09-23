@@ -149,7 +149,7 @@ def get_imagenet(args, preprocess_fns, split):
     crop = 224
     pipe_val = val_pipeline(valdir, args.batch_size, args.device, args.world_size, num_thread, crop, rocal_cpu, wds=False)
     pipe_val.build()
-    dataloader = ROCALClassificationIterator(pipe_val, device="cpu" if rocal_cpu else "cuda", device_id = args.device)
+    dataloader = ROCALClassificationIterator(pipe_val, device="cpu" if rocal_cpu else "cuda", device_id = torch.distributed.get_rank())
     return DataInfo(dataloader=dataloader, sampler=None)
 
 
@@ -418,13 +418,13 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         crop = 224
         pipe_train = train_pipeline(traindir, args.batch_size, args.device, args.world_size, num_thread, crop, rocal_cpu)
         pipe_train.build()
-        dataloader = ROCALClassificationIterator(pipe_train, device="cpu" if rocal_cpu else "cuda", device_id = args.device)
+        dataloader = ROCALClassificationIterator(pipe_train, device="cpu" if rocal_cpu else "cuda", device_id = torch.distributed.get_rank())
     else:
         valdir = os.path.dirname(input_shards) + "/"
         crop = 224
         pipe_val = val_pipeline(valdir, args.batch_size, args.device, args.world_size, num_thread, crop, rocal_cpu, wds=True)
         pipe_val.build()
-        dataloader = ROCALClassificationIterator(pipe_val, device="cpu" if rocal_cpu else "cuda", device_id = args.device)
+        dataloader = ROCALClassificationIterator(pipe_val, device="cpu" if rocal_cpu else "cuda", device_id = torch.distributed.get_rank())
     # dataset = wds.DataPipeline(*pipeline)
 
     if is_train:
