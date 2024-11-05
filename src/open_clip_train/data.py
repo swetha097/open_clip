@@ -319,17 +319,15 @@ class ResampledShards2(IterableDataset):
 
 def train_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop, rocal_cpu):
     print("\n DATASET PATH OF TRAIN PIPELINE", data_path)
-    # print("type pf local rank",type(int(local_rank)))
-    # print(int(local_rank))
     index_file = "/dataset/cc3m-wds/train_idx/"
     pipe = Pipeline(batch_size=batch_size, num_threads=8, device_id=torch.distributed.get_rank(), seed=torch.distributed.get_rank()+10, rocal_cpu=rocal_cpu, tensor_dtype = types.FLOAT, tensor_layout=types.NCHW, prefetch_queue_depth = 6, mean = [0.48145466 * 255, 0.4578275 * 255, 0.40821073 * 255], std = [0.229 * 255,0.224 * 255,0.225 * 255], output_memory_type = types.HOST_MEMORY if rocal_cpu else types.DEVICE_MEMORY)
     with pipe:
         img_raw = fn.readers.webdataset(
         path=data_path, ext=[{'jpg', 'json', 'txt'}], missing_components_behavior = types.SKIP, index_paths = index_file)
-        decode = fn.decoders.webdataset(img_raw, file_root=data_path, index_path = index_file, color_format=types.RGB,max_decoded_width=1510, max_decoded_height=1024, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=True)
+        decode = fn.decoders.webdataset(img_raw, file_root=data_path, index_path = index_file, output_type = types.RGB, max_decoded_width=1510, max_decoded_height=1024, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=True)
         rocal_device = 'cpu' if rocal_cpu else 'gpu'
-        crop_aspect_ratio = fn.random.uniform(img_raw, range=[0.75, 1.3333])
-        crop_area_factor = fn.random.uniform(img_raw, range=[0.9, 1])
+        crop_aspect_ratio = fn.uniform(img_raw, range=[0.75, 1.3333])
+        crop_area_factor = fn.uniform(img_raw, range=[0.9, 1])
         # randomcrop = fn.random_crop(decode, crop_area_factor=[0.9, 1], crop_aspect_ratio=[0.75, 1.3333],
         #         crop_pox_x=0, crop_pox_y=0, num_attempts=20, device=None,
         #         all_boxes_above_threshold=True, allow_no_crop=True, ltrb=True, output_layout=types.NHWC, output_dtype=types.UINT8)
@@ -368,7 +366,7 @@ def val_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop
         if wds:
             img_raw = fn.readers.webdataset(
             path=data_path, ext=[{'jpg', 'txt'}], missing_components_behavior = types.SKIP, index_paths = index_file)
-            decode = fn.decoders.webdataset(img_raw, last_batch_policy=types.LAST_BATCH_PARTIAL, index_path = index_file, file_root=data_path, color_format=types.RGB,max_decoded_width=512, max_decoded_height=512, shard_id=0, num_shards=1)
+            decode = fn.decoders.webdataset(img_raw, last_batch_policy=types.LAST_BATCH_PARTIAL, index_path = index_file, output_type= types.RGB, file_root=data_path, max_decoded_width=512, max_decoded_height=512, shard_id=0, num_shards=1)
         else:
             jpegs, labels = fn.readers.file(file_root=data_path)
             decode = fn.decoders.image(jpegs,file_root=data_path, max_decoded_width=1000, max_decoded_height=1000, output_type=types.RGB, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=False, last_batch_policy=types.LAST_BATCH_PARTIAL)
@@ -386,15 +384,10 @@ def val_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop
     return pipe
 
 def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None):
-    print("Inside get_wds_dataset")
     input_shards = args.train_data if is_train else args.val_data
-    print("input shards", input_shards)
-    # exit(0)
 
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
-    print("\n resampled", resampled)
-    # exit(0)
     num_shards = None
     if is_train:
         if args.train_num_samples is not None:
@@ -541,7 +534,6 @@ def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
 
 
 def get_dataset_fn(data_path, dataset_type):
-    print("Calls the dataset fn")
     if dataset_type == "webdataset":
         return get_wds_dataset
     elif dataset_type == "csv":
