@@ -452,7 +452,12 @@ def parse_args(args):
         action="store_true",
         help='Use SigLip (sigmoid) loss.'
     )
-
+    parser.add_argument(
+        "--rocal-gpu",
+        default=False,
+        action="store_true",
+        help='Enable rocAL HIP backend'
+    )
     args = parser.parse_args(args)
 
     # If some params are not passed, we use the default values based on model name.

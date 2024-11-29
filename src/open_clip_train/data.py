@@ -127,7 +127,7 @@ def get_dataset_size(shards):
     return total_size, num_shards
 
 
-def get_imagenet(args, preprocess_fns, split):
+def get_imagenet(args, preprocess_fns, split, rocal_gpu):
     assert split in ["train", "val", "v2"]
     is_train = split == "train"
     preprocess_train, preprocess_val = preprocess_fns
@@ -143,7 +143,7 @@ def get_imagenet(args, preprocess_fns, split):
             data_path = args.imagenet_val
             preprocess_fn = preprocess_val
         assert data_path
-    rocal_cpu = True
+    rocal_cpu = not rocal_gpu
     num_thread = 1
     valdir = data_path
     crop = 224
@@ -383,7 +383,7 @@ def val_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop
     print('rocal "{0}" variant'.format(rocal_device))
     return pipe
 
-def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None):
+def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None, rocal_gpu=False):
     input_shards = args.train_data if is_train else args.val_data
 
     assert input_shards is not None
@@ -404,7 +404,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
 
     shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
 
-    rocal_cpu = True
+    rocal_cpu = not rocal_gpu
     num_thread = 1
     if is_train:
         traindir = os.path.dirname(input_shards) + "/"
@@ -560,16 +560,16 @@ def get_data(args, preprocess_fns, epoch=0, tokenizer=None):
     # print("preprocess_val", preprocess_val)
     if args.train_data or args.dataset_type == "synthetic":
         data["train"] = get_dataset_fn(args.train_data, args.dataset_type)(
-            args, preprocess_train, is_train=True, epoch=epoch, tokenizer=tokenizer)
+            args, preprocess_train, is_train=True, epoch=epoch, tokenizer=tokenizer, rocal_gpu=args.rocal_gpu)
 
     if args.val_data:
         data["val"] = get_dataset_fn(args.val_data, args.dataset_type)(
-            args, preprocess_val, is_train=False, tokenizer=tokenizer)
+            args, preprocess_val, is_train=False, tokenizer=tokenizer, rocal_gpu=args.rocal_gpu)
 
     if args.imagenet_val is not None:
-        data["imagenet-val"] = get_imagenet(args, preprocess_fns, "val")
+        data["imagenet-val"] = get_imagenet(args, preprocess_fns, "val", args.rocal_gpu)
 
     if args.imagenet_v2 is not None:
-        data["imagenet-v2"] = get_imagenet(args, preprocess_fns, "v2")
+        data["imagenet-v2"] = get_imagenet(args, preprocess_fns, "v2", args.rocal_gpu)
 
     return data
