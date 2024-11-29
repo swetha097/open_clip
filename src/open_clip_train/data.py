@@ -324,7 +324,7 @@ def train_pipeline(data_path, batch_size, local_rank, world_size, num_thread, cr
     with pipe:
         img_raw = fn.readers.webdataset(
         path=data_path, ext=[{'jpg', 'json', 'txt'}], missing_components_behavior = types.SKIP, index_paths = index_file)
-        decode = fn.decoders.webdataset(img_raw, file_root=data_path, index_path = index_file, output_type = types.RGB, max_decoded_width=1510, max_decoded_height=1024, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=True)
+        decode = fn.decoders.image(img_raw, file_root=data_path, index_path = index_file, output_type = types.RGB, max_decoded_width=1510, max_decoded_height=1024, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=True)
         rocal_device = 'cpu' if rocal_cpu else 'gpu'
         crop_aspect_ratio = fn.uniform(img_raw, range=[0.75, 1.3333])
         crop_area_factor = fn.uniform(img_raw, range=[0.9, 1])
@@ -366,7 +366,7 @@ def val_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop
         if wds:
             img_raw = fn.readers.webdataset(
             path=data_path, ext=[{'jpg', 'txt'}], missing_components_behavior = types.SKIP, index_paths = index_file)
-            decode = fn.decoders.webdataset(img_raw, last_batch_policy=types.LAST_BATCH_PARTIAL, index_path = index_file, output_type= types.RGB, file_root=data_path, max_decoded_width=512, max_decoded_height=512, shard_id=0, num_shards=1)
+            decode = fn.decoders.image(img_raw, last_batch_policy=types.LAST_BATCH_PARTIAL, index_path = index_file, output_type= types.RGB, file_root=data_path, max_decoded_width=512, max_decoded_height=512, shard_id=0, num_shards=1)
         else:
             jpegs, labels = fn.readers.file(file_root=data_path)
             decode = fn.decoders.image(jpegs,file_root=data_path, max_decoded_width=1000, max_decoded_height=1000, output_type=types.RGB, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=False, last_batch_policy=types.LAST_BATCH_PARTIAL)
