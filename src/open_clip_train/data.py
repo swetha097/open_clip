@@ -323,7 +323,7 @@ def train_pipeline(data_path, batch_size, local_rank, world_size, num_thread, cr
     pipe = Pipeline(batch_size=batch_size, num_threads=8, device_id=torch.distributed.get_rank(), seed=torch.distributed.get_rank()+10, rocal_cpu=rocal_cpu, tensor_dtype = types.FLOAT, tensor_layout=types.NCHW, prefetch_queue_depth = 6, mean = [0.48145466 * 255, 0.4578275 * 255, 0.40821073 * 255], std = [0.229 * 255,0.224 * 255,0.225 * 255], output_memory_type = types.HOST_MEMORY if rocal_cpu else types.DEVICE_MEMORY)
     with pipe:
         img_raw = fn.readers.webdataset(
-        path=data_path, ext=[{'jpg', 'json', 'txt'}], missing_components_behavior = types.SKIP, index_paths = index_file)
+        path=data_path, ext=[{'jpg', 'json', 'txt'}], missing_components_behavior = types.MISSING_COMPONENT_SKIP, index_paths = index_file)
         decode = fn.decoders.image(img_raw, file_root=data_path, index_path = index_file, output_type = types.RGB, max_decoded_width=1510, max_decoded_height=1024, shard_id=torch.distributed.get_rank(), num_shards=world_size, random_shuffle=True)
         rocal_device = 'cpu' if rocal_cpu else 'gpu'
         crop_aspect_ratio = fn.uniform(img_raw, range=[0.75, 1.3333])
@@ -365,7 +365,7 @@ def val_pipeline(data_path, batch_size, local_rank, world_size, num_thread, crop
         rocal_device = 'cpu' if rocal_cpu else 'gpu'
         if wds:
             img_raw = fn.readers.webdataset(
-            path=data_path, ext=[{'jpg', 'txt'}], missing_components_behavior = types.SKIP, index_paths = index_file)
+            path=data_path, ext=[{'jpg', 'txt'}], missing_components_behavior = types.MISSING_COMPONENT_SKIP, index_paths = index_file)
             decode = fn.decoders.image(img_raw, last_batch_policy=types.LAST_BATCH_PARTIAL, index_path = index_file, output_type= types.RGB, file_root=data_path, max_decoded_width=512, max_decoded_height=512, shard_id=0, num_shards=1)
         else:
             jpegs, labels = fn.readers.file(file_root=data_path)
